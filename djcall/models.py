@@ -153,6 +153,8 @@ class Caller(Metadata):
         db_index=True,
     )
     max_attempts = models.IntegerField(default=1)
+    spooler = models.CharField(max_length=100, null=True, blank=True)
+    priority = models.IntegerField(null=True, blank=True)
 
     @property
     def python_callback(self):
@@ -214,7 +216,23 @@ class Call(Metadata):
                 max_attempts=kwargs.pop('max_attempts'),
                 kwargs=kwargs.pop('kwargs'),
             ).objects.create()
+
+        if 'spooler' in kwargs:
+            self.spooler = self.get_spooler_path(kwargs['spooler'])
+
         super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def get_spooler_path(name):
+        if not uwsgi:
+            return name
+
+        for spooler in uwsgi.spoolers:
+            spooler = spooler.encode('ascii')
+            if spooler.endswith(name):
+                return spooler
+
+        return name
 
     def save_status(self, status, commit=True):
         super().save_status(status, commit=commit)
