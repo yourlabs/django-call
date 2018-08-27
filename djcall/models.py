@@ -1,61 +1,12 @@
-"""
-
-# Define your callback
-def cb(someid, call):
-    obj = YourModel.objects.get(id=someid)
-
-    # spawn sub tasks
-    for child in obj.children:
-        Call(
-            callback='subcb',
-            kwargs=dict(childid=child.id),
-            parent=call,
-        ).launch()
-
-    # return something that will be pickled too
-    return dict(processed=obj.children)
-
-call = Call(callback='your.cb', kwargs=dict(someid=1))
-
-# Call now, through uWSGI spooler if available
-call.launch()  # otherwise use spool() or execute()
-
-while call.status == Call.STATUS_PENDING:
-    call.refresh_from_db()
-
-while call.status == Call.STATUS_SPOOLED:
-    call.refresh_from_db()
-
-while call.status == Call.STATUS_STARTED:
-    call.refresh_from_db()
-
-if call.status == Call.STATUS_SUCCESS:
-    print('way to go !')
-
-if call.status == Call.STATUS_ERROR:
-    print(call.traceback)
-
-for call in call.callable.call_set.all():
-    print(call.remaining_tries)
-
-# Call on sundays, will register in uWSGI cron if available
-cron = Cron(weekday=1, callback='your.cb')
-
-cron.register()
-
-# List calls from cron, with subcalls from errors
-for call in cron.callable.call_set.all():
-    print(call.callable.call_set.all())
-
-# "Weird" pattern right ? but simple and stupid though, somewhat, thanks to
-# model inheritance
-"""
 import itertools
+import logging
 import traceback
 import sys
 
+from django.db import connection
 from django.db import models
 from django.db import transaction
+from django.db.models import signals
 from django.utils import timezone
 from django.utils.module_loading import import_string
 from django.utils.translation import gettext_lazy as _
@@ -68,6 +19,9 @@ except ImportError:
     uwsgi = None
 
 
+logger = logging.getLogger(__name__)
+
+
 def spooler(env):
     success = getattr(uwsgi, 'SPOOL_OK', True)
     call = Call.objects.filter(pk=env[b'call']).first()
@@ -75,7 +29,8 @@ def spooler(env):
         try:
             call.call()
         except:
-            if call.caller.call_set.count() >= call.caller.max_attempts:
+            max_attempts = call.caller.max_attempts
+            if max_attempts and call.caller.call_set.count() >= max_attempts:
                 return success
             raise  # will trigger retry from uwsgi
     return success
@@ -83,6 +38,32 @@ def spooler(env):
 
 if uwsgi:
     uwsgi.spooler = spooler
+
+
+def get_spooler_path(name):
+    if not uwsgi:
+        return name
+
+    if hasattr(name, 'encode'):
+        name = name.encode('ascii')
+
+    for spooler in uwsgi.spoolers:
+        if hasattr(spooler, 'encode'):
+            spooler = spooler.encode('ascii')
+        if spooler.endswith(name):
+            return spooler
+
+    return name
+
+
+def prune(**kwargs):
+    keep = kwargs.get('keep', 10000)
+    keep_qs = Call.objects.order_by('created')[:keep]
+    drop_qs = Call.objects.exclude(
+        pk__in=keep_qs.values_list('pk', flat=True)
+    )
+    print(f'Dropping {drop_qs.count()} Call objects')
+    drop_qs._raw_delete(drop_qs.db)
 
 
 class Metadata(models.Model):
@@ -140,19 +121,20 @@ class Metadata(models.Model):
 
         if commit:
             self.save()
-            transaction.commit()
+            if not transaction.get_connection().in_atomic_block:
+                transaction.commit()
 
     class Meta:
         abstract = True
 
 
 class Caller(Metadata):
-    kwargs = PickledObjectField(null=True, protocol=-1)
+    kwargs = PickledObjectField(null=True)
     callback = models.CharField(
         max_length=255,
         db_index=True,
     )
-    max_attempts = models.IntegerField(default=1)
+    max_attempts = models.IntegerField(default=0)
     spooler = models.CharField(max_length=100, null=True, blank=True)
     priority = models.IntegerField(null=True, blank=True)
 
@@ -171,16 +153,29 @@ class Caller(Metadata):
         call.call()
         return call
 
-    def spool(self):
+    def spool(self, spooler=None):
+        if spooler:
+            self.spooler = spooler
         self.save_status('spooled')
         call = Call.objects.create(caller=self)
 
         if uwsgi:
-            uwsgi.spool({b'call': str(self.pk).encode('ascii')})
+            arg = {b'call': str(self.pk).encode('ascii')}
+            if self.spooler:
+                arg[b'spooler'] = get_spooler_path(self.spooler)
+            if self.priority:
+                arg[b'priority'] = self.priority
+            transaction.on_commit(lambda: uwsgi.spool(arg))
         else:
             call.call()
 
         return self
+
+
+def default_kwargs(sender, instance, **kwargs):
+    if instance.kwargs is None:
+        instance.kwargs = dict()
+signals.post_save.connect(default_kwargs, sender=Caller)
 
 
 class Call(Metadata):
@@ -218,21 +213,9 @@ class Call(Metadata):
             ).objects.create()
 
         if 'spooler' in kwargs:
-            self.spooler = self.get_spooler_path(kwargs['spooler'])
+            self.spooler = get_spooler_path(kwargs['spooler'])
 
         super().__init__(*args, **kwargs)
-
-    @staticmethod
-    def get_spooler_path(name):
-        if not uwsgi:
-            return name
-
-        for spooler in uwsgi.spoolers:
-            spooler = spooler.encode('ascii')
-            if spooler.endswith(name):
-                return spooler
-
-        return name
 
     def save_status(self, status, commit=True):
         super().save_status(status, commit=commit)
@@ -256,8 +239,12 @@ class CronManager(models.Manager):
         if not uwsgi:
             return
 
+        callers = Caller.objects.annotate(
+            crons=models.Count('cron')
+        ).exclude(crons=0)
+
         signal_number = 1
-        for caller in Caller.objects.all():
+        for caller in callers:
             crons = caller.cron_set.all()
 
             if not crons:
@@ -266,7 +253,7 @@ class CronManager(models.Manager):
             uwsgi.register_signal(
                 signal_number,
                 'worker',
-                lambda: caller.call(),
+                lambda signal_number: caller.call(),
             )
 
             for cron in crons:
@@ -277,11 +264,11 @@ class CronManager(models.Manager):
 
 class Cron(models.Model):
     caller = models.ForeignKey(Caller, on_delete=models.CASCADE)
-    minute = models.CharField(max_length=50)
-    hour = models.CharField(max_length=50)
-    day = models.CharField(max_length=50)
-    month = models.CharField(max_length=50)
-    weekday = models.CharField(max_length=50)
+    minute = models.CharField(max_length=50, default='*')
+    hour = models.CharField(max_length=50, default='*')
+    day = models.CharField(max_length=50, default='*')
+    month = models.CharField(max_length=50, default='*')
+    weekday = models.CharField(max_length=50, default='*')
 
     objects = CronManager()
 
@@ -307,8 +294,4 @@ class Cron(models.Model):
 
     def add_cron(self, signal_number):
         for args in self.get_matrix():
-            uwsgi.add_cron(
-                signal_number,
-                'worker',
-                *args
-            )
+            uwsgi.add_cron(signal_number, *args)

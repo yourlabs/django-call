@@ -1,3 +1,61 @@
+from crudlfap import crudlfap
+from django_filters import filters
+import django_tables2 as tables
+
+from .models import Call, Caller, Cron
+
+
+crudlfap.Router(
+    Call,
+    material_icon='autorenew',
+    views=[
+        crudlfap.DetailView.clone(
+            code_fields=['output', 'traceback', 'callback_code'],
+        ),
+        crudlfap.ListView.clone(
+            table_meta_attributes_extra=dict(
+                page_field='execution_page',
+            ),
+            table_columns=dict(
+                callback=tables.Column(accessor='task.callback'),
+            ),
+            table_fields=[
+                'status',
+                'started',
+                'ended',
+            ],
+            queryset=Call.objects.all().select_related('caller'),
+        ),
+    ],
+).register()
+
+crudlfap.Router(
+    Caller,
+    material_icon='local_laundry_service',
+    views=[
+        crudlfap.ListView.clone(
+            filterset_extra_class_attributes=dict(
+                status=filters.ChoiceFilter(choices=Caller.STATUS_CHOICES)
+            ),
+            table_fields=[
+                'id',
+                'callback',
+                'spooled',
+                'status',
+            ],
+            search_fields=[
+                'callback',
+            ],
+        ),
+        crudlfap.UpdateView,
+        crudlfap.DeleteObjectsView,
+        crudlfap.DeleteView,
+        crudlfap.DetailView,
+    ]
+).register()
+
+crudlfap.Router(Cron).register()
+
 '''
 from crudlfap import crudlfap
 

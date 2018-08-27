@@ -8,7 +8,7 @@ def read(fname):
 
 setup(
     name='django-call',
-    version='0.0.0',
+    version='0.0.2',
     description='Leverage uWSGI spooler and cron in Django',
     author='James Pic',
     author_email='jpic@yourlabs.org',
@@ -36,14 +36,12 @@ setup(
         ],
     },
     classifiers=[
-        'Development Status :: 1 - Planning',
+        'Development Status :: 2 - Pre-Alpha',
         'Environment :: Web Environment',
         'Framework :: Django',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
-        'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 3',
         'Topic :: Internet :: WWW/HTTP',
         'Topic :: Software Development :: Libraries :: Python Modules',
