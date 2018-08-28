@@ -140,7 +140,21 @@ class Caller(Metadata):
 
     @property
     def python_callback(self):
-        return import_string(self.callback)
+        parts = self.callback.split('.')
+        i = self.callback.count('.')
+        while i:
+            try:
+                mod = import_string('.'.join(parts[:i + 1]))
+            except ImportError:
+                if not i:
+                    raise
+                i -= 1
+            else:
+                ret = mod
+                while 0 < i < self.callback.count('.'):
+                    ret = getattr(ret, parts[len(parts) - i])
+                    i -= 1
+                return ret
 
     def python_callback_call(self):
         return self.python_callback(**self.kwargs)

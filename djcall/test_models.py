@@ -72,7 +72,6 @@ def test_uwsgi_spooler():
     assert spooler({b'call': caller.call_set.create().pk})
 
 
-@pytest.mark.django_db(transaction=True)
 def test_cron_matrix():
     cron = Cron(
         minute='1-2',
@@ -86,3 +85,8 @@ def test_cron_matrix():
         (1, 1, 1, -1, -1),
         (2, 1, 1, -1, -1),
     ]
+
+
+def test_python_callback():
+    caller = Caller(callback='djcall.models.Caller.objects.all')
+    assert caller.python_callback == Caller.objects.all
