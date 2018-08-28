@@ -137,6 +137,11 @@ class Caller(Metadata):
     max_attempts = models.IntegerField(default=0)
     spooler = models.CharField(max_length=100, null=True, blank=True)
     priority = models.IntegerField(null=True, blank=True)
+    signal_number = models.IntegerField(null=True, blank=True)
+
+    def __str__(self):
+        args = ', '.join([f'{k}={v}' for k, v in self.kwargs.items()])
+        return f'{self.callback}({args})'
 
     @property
     def python_callback(self):
@@ -236,6 +241,7 @@ class Call(Metadata):
         self.caller.save_status(status, commit=commit)
 
     def call(self):
+        logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call()')
         self.save_status('started')
         try:
             self.result = self.caller.python_callback_call()
@@ -246,34 +252,48 @@ class Call(Metadata):
             raise
         else:
             self.save_status('success')
+        logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): {self.result}')
 
 
 class CronManager(models.Manager):
-    def add_crons(self):
+    def register_signals(self):
         if not uwsgi:
             return
 
         callers = Caller.objects.annotate(
             crons=models.Count('cron')
-        ).exclude(crons=0)
+        ).prefetch_related('cron_set').exclude(crons=0)
 
         signal_number = 1
         for caller in callers:
-            crons = caller.cron_set.all()
-
-            if not crons:
-                continue
+            caller.signal_number = signal_number
+            caller.save()
 
             uwsgi.register_signal(
-                signal_number,
-                'worker',
-                lambda signal_number: caller.call(),
+                caller.signal_number,
+                caller.spooler or 'worker',
+                lambda signal_number: Caller.objects.get(
+                    signal_number=signal_number
+                ).call(),
             )
 
-            for cron in crons:
-                cron.add_cron(signal_number)
+            # logger doesn't work yet at this point of uwsgi startup apparentnly
+            # logger.info(f'uwsgi.register_signal({signal_number}, {caller.callback})')
+            logger.error(f'[djcall] uwsgi.register_signal({signal_number}, {caller.callback})')
 
             signal_number += 1
+
+        transaction.commit()
+        return callers
+
+    def add_crons(self):
+        if not uwsgi:
+            return
+
+        callers = self.register_signals()
+        for caller in callers:
+            for cron in caller.cron_set.all():
+                cron.add_cron()
 
 
 class Cron(models.Model):
@@ -306,6 +326,7 @@ class Cron(models.Model):
 
         return list(itertools.product(*args))
 
-    def add_cron(self, signal_number):
+    def add_cron(self):
         for args in self.get_matrix():
-            uwsgi.add_cron(signal_number, *args)
+            logger.error(f'[djcall] {self.caller} add cron : {args} signal {self.caller.signal_number}')
+            uwsgi.add_cron(self.caller.signal_number, *args)
