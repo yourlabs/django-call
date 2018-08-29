@@ -90,3 +90,8 @@ def test_cron_matrix():
 def test_python_callback():
     caller = Caller(callback='djcall.models.Caller.objects.all')
     assert caller.python_callback == Caller.objects.all
+
+
+def test_str():
+    assert str(Caller(callback='lol')) == 'lol()'
+    assert str(Caller(callback='lol', kwargs=dict(a=1, b=2))) == 'lol(a=1, b=2)'

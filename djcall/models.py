@@ -140,7 +140,10 @@ class Caller(Metadata):
     signal_number = models.IntegerField(null=True, blank=True)
 
     def __str__(self):
-        args = ', '.join([f'{k}={v}' for k, v in self.kwargs.items()])
+        if hasattr(self.kwargs, 'items'):
+            args = ', '.join([f'{k}={v}' for k, v in self.kwargs.items()])
+        else:
+            args = ''
         return f'{self.callback}({args})'
 
     @property
@@ -167,7 +170,6 @@ class Caller(Metadata):
     def call(self):
         if not self.pk:
             self.save()
-
         call = Call.objects.create(caller=self)
         call.call()
         return call
