@@ -261,10 +261,11 @@ class Call(Metadata):
             self.exception = '\n'.join(traceback.format_exception(tt, value, tb))
             close_old_connections()
             self.save_status('failure')
+            logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): error')
             raise
 
         self.save_status('success')
-        logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): end')
+        logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): success')
 
 
 class CronManager(models.Manager):
