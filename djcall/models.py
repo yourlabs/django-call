@@ -3,6 +3,7 @@ import logging
 import traceback
 import sys
 
+from django.db import close_old_connections
 from django.db import connection
 from django.db import models
 from django.db import transaction
@@ -23,20 +24,35 @@ logger = logging.getLogger(__name__)
 
 
 def spooler(env):
-    pk = env[b'call']
-    call = Call.objects.filter(pk=pk).first()
+    """
+    uWSGI spooler callback
 
-    success = getattr(uwsgi, 'SPOOL_OK', True)
-    if call:
-        try:
-            call.call()
-        except:
-            max_attempts = call.caller.max_attempts
-            if max_attempts and call.caller.call_set.count() >= max_attempts:
-                return success
-            raise  # will trigger retry from uwsgi
-    else:
-        logger.exception(f'Call(id={pk}) not found in db ! unspooling')
+    We'll try to mimic what django does for requests
+    """
+    pk = env[b'call']
+
+    # this is required otherwise some postgresql exceptions blow
+    close_old_connections()
+
+    with transaction.atomic():
+        call = Call.objects.filter(pk=pk).first()
+
+        success = getattr(uwsgi, 'SPOOL_OK', True)
+        if call:
+            try:
+                call.call()
+            except:
+                max_attempts = call.caller.max_attempts
+                close_old_connections()  # cleanup
+
+                if max_attempts and call.caller.call_set.count() >= max_attempts:
+                    return success
+                raise  # will trigger retry from uwsgi
+        else:
+            logger.exception(
+                f'Call(id={pk}) not found in db ! unspooling')
+
+    close_old_connections()  # cleanup
     return success
 
 
