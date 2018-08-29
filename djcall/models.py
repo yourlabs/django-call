@@ -6,6 +6,7 @@ import sys
 from django.db import connection
 from django.db import models
 from django.db import transaction
+from django.db import close_old_connections
 from django.db.models import signals
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -23,16 +24,21 @@ logger = logging.getLogger(__name__)
 
 
 def spooler(env):
+    close_old_connections()
+    pk = env[b'call']
+    call = Call.objects.filter(pk=pk).first()
+
     success = getattr(uwsgi, 'SPOOL_OK', True)
-    call = Call.objects.filter(pk=env[b'call']).first()
     if call:
         try:
-            call.call()
+            call.call(False)
         except:
             max_attempts = call.caller.max_attempts
             if max_attempts and call.caller.call_set.count() >= max_attempts:
                 return success
             raise  # will trigger retry from uwsgi
+    else:
+        logger.exception(f'Call(id={pk}) not found in db ! unspooling')
     return success
 
 
@@ -242,7 +248,10 @@ class Call(Metadata):
         super().save_status(status, commit=commit)
         self.caller.save_status(status, commit=commit)
 
-    def call(self):
+    def call(self, close_old_connections_first=True):
+        if close_old_connections_first:
+            close_old_connections()
+
         logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call()')
         self.save_status('started')
         try:
@@ -250,6 +259,8 @@ class Call(Metadata):
         except Exception as e:
             tt, value, tb = sys.exc_info()
             self.exception = '\n'.join(traceback.format_exception(tt, value, tb))
+            if close_old_connections:
+                close_old_connections()
             self.save_status('failure')
             raise
         else:
