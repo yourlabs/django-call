@@ -201,7 +201,7 @@ class Caller(Metadata):
         call = Call.objects.create(caller=self)
 
         if uwsgi:
-            arg = {b'call': str(self.pk).encode('ascii')}
+            arg = {b'call': str(call.pk).encode('ascii')}
             if self.spooler:
                 arg[b'spooler'] = get_spooler_path(self.spooler)
             if self.priority:
