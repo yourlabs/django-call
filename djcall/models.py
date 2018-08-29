@@ -259,8 +259,7 @@ class Call(Metadata):
         except Exception as e:
             tt, value, tb = sys.exc_info()
             self.exception = '\n'.join(traceback.format_exception(tt, value, tb))
-            if close_old_connections:
-                close_old_connections()
+            close_old_connections()
             self.save_status('failure')
             raise
         else:
