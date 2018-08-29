@@ -7,3 +7,5 @@ DEBUG = True
 ROOT_URLCONF = 'djcall_example.urls'
 
 INSTALLED_APPS += ['djcall']
+
+STATIC_ROOT = 'static'

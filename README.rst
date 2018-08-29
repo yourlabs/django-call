@@ -1,3 +1,30 @@
+Install
+=======
+
+pip install django-call
+
+Add djcall to INSTALLED_APPS and migrate.
+
+Example project
+===============
+
+Setup example project::
+
+    djcall-example collectstatic
+    djcall-example migrate
+    djcall-example createsuperuser
+
+Run with runserver::
+
+    djcall-example runserver
+
+Or with uWSGI::
+
+    uwsgi --env DJANGO_SETTINGS_MODULE=djcall_example.settings --env DEBUG=1 --spooler=/spooler/stat --spooler=/spooler/mail --spooler-processes 1 --http=:8000 --plugin=python --module=djcall_example.wsgi:application --honour-stdin --static-map /static=static
+
+History
+=======
+
 First made a dead simple pure python generic spooler for uwsgi:
 https://gist.github.com/jpic/d28333b0573c3c555fbe6e55862ecddb
 
