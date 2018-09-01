@@ -164,7 +164,11 @@ class Caller(Metadata):
 
     def __str__(self):
         if hasattr(self.kwargs, 'items'):
-            args = ', '.join([f'{k}={v}' for k, v in self.kwargs.items()])
+            def c(v):
+                return str(v).strip().replace('\n', ' ')[:16].encode(
+                    'ascii', 'ignore').decode('utf8')
+
+            args = ', '.join([f'{k}={c(v)}' for k, v in self.kwargs.items()])
         else:
             args = ''
         return f'{self.callback}({args})'
