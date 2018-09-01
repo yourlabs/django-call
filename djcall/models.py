@@ -149,6 +149,9 @@ class Metadata(models.Model):
 
 
 class Caller(Metadata):
+    """
+    SECURITY WARNING: never trust user input for kwargs or callback !
+    """
     kwargs = PickledObjectField(null=True)
     callback = models.CharField(
         max_length=255,
