@@ -265,10 +265,14 @@ class Call(Metadata):
     def call(self):
         logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call()')
         self.save_status('started')
+
+        sid = transaction.savepoint()
         try:
             self.result = self.caller.python_callback_call()
+            transaction.savepoint_commit(sid)
         except Exception as e:
             tt, value, tb = sys.exc_info()
+            transaction.savepoint_rollback(sid)
             self.exception = '\n'.join(traceback.format_exception(tt, value, tb))
             self.save_status('failure')
             logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): error')
@@ -283,6 +287,14 @@ class CronManager(models.Manager):
         if not uwsgi:
             return
 
+        def executor(signal_number):
+            close_old_connections()
+            result = Caller.objects.get(
+                signal_number=signal_number
+            ).call()
+            close_old_connections()
+            return result
+
         callers = Caller.objects.annotate(
             crons=models.Count('cron')
         ).prefetch_related('cron_set').exclude(crons=0)
@@ -295,9 +307,7 @@ class CronManager(models.Manager):
             uwsgi.register_signal(
                 caller.signal_number,
                 caller.spooler or 'worker',
-                lambda signal_number: Caller.objects.get(
-                    signal_number=signal_number
-                ).call(),
+                executor,
             )
 
             # logger doesn't work yet at this point of uwsgi startup apparentnly
