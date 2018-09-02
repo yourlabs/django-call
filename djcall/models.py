@@ -20,7 +20,13 @@ except ImportError:
     uwsgi = None
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('djcall')
+
+
+def c(v):
+    """Clean a value for logger output"""
+    return str(v).strip().replace('\n', ' ')[:16].encode(
+        'ascii', 'ignore').decode('utf8')
 
 
 def spooler(env):
@@ -29,6 +35,9 @@ def spooler(env):
 
     We'll try to mimic what django does for requests
     """
+    args = ', '.join([f'{k}={c(v)}' for k, v in env.items()])
+    logger.debug(f'spooler(c({args}))')
+
     pk = env[b'call']
 
     # this is required otherwise some postgresql exceptions blow
@@ -50,8 +59,9 @@ def spooler(env):
                 raise  # will trigger retry from uwsgi
         else:
             logger.exception(
-                f'Call(id={pk}) not found in db ! unspooling')
+                f'Call(id={pk}) not found in db ! removing from uWSGI spooler')
 
+    logger.debug(f'spooler(c({args})): closing on success')
     close_old_connections()  # cleanup
     return success
 
@@ -71,8 +81,10 @@ def get_spooler_path(name):
         if hasattr(spooler, 'encode'):
             spooler = spooler.encode('ascii')
         if spooler.endswith(name):
+            logger.debug(f'get_spooler_path({name}) = {spooler})')
             return spooler
 
+    logger.debug(f'get_spooler_path({name}) ?= {name})')
     return name
 
 
@@ -82,7 +94,6 @@ def prune(**kwargs):
     drop_qs = Call.objects.exclude(
         pk__in=keep_qs.values_list('pk', flat=True)
     )
-    print(f'Dropping {drop_qs.count()} Call objects')
     drop_qs._raw_delete(drop_qs.db)
 
 
@@ -164,10 +175,6 @@ class Caller(Metadata):
 
     def __str__(self):
         if hasattr(self.kwargs, 'items'):
-            def c(v):
-                return str(v).strip().replace('\n', ' ')[:16].encode(
-                    'ascii', 'ignore').decode('utf8')
-
             args = ', '.join([f'{k}={c(v)}' for k, v in self.kwargs.items()])
         else:
             args = ''
@@ -202,6 +209,7 @@ class Caller(Metadata):
         return call
 
     def spool(self, spooler=None):
+        logger.debug(f'{self}.spool()')
         if spooler:
             self.spooler = spooler
         self.save_status('spooled')
@@ -213,10 +221,14 @@ class Caller(Metadata):
                 arg[b'spooler'] = get_spooler_path(self.spooler)
             if self.priority:
                 arg[b'priority'] = self.priority
-            transaction.on_commit(lambda: uwsgi.spool(arg))
+            def spool():
+                logger.debug(f'uwsgi.spool({arg})')
+                uwsgi.spool(arg)
+            transaction.on_commit(spool)
         else:
             call.call()
 
+        logger.debug(f'{self}.spool(): success')
         return self
 
 
@@ -270,7 +282,7 @@ class Call(Metadata):
         self.caller.save_status(status, commit=commit)
 
     def call(self):
-        logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call()')
+        logger.debug(f'{self.caller} -> Call(id={self.pk}).call()')
         self.save_status('started')
 
         sid = transaction.savepoint()
@@ -282,11 +294,11 @@ class Call(Metadata):
             transaction.savepoint_rollback(sid)
             self.exception = '\n'.join(traceback.format_exception(tt, value, tb))
             self.save_status('failure')
-            logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): error')
+            logger.exception(f'{self.caller} -> Call(id={self.pk}).call(): exception')
             raise
 
         self.save_status('success')
-        logger.error(f'[djcall] {self.caller} -> Call(id={self.pk}).call(): success')
+        logger.debug(f'{self.caller} -> Call(id={self.pk}).call(): success')
 
 
 class CronManager(models.Manager):
@@ -317,9 +329,7 @@ class CronManager(models.Manager):
                 executor,
             )
 
-            # logger doesn't work yet at this point of uwsgi startup apparentnly
-            # logger.info(f'uwsgi.register_signal({signal_number}, {caller.callback})')
-            logger.error(f'[djcall] uwsgi.register_signal({signal_number}, {caller.callback})')
+            logger.debug(f'uwsgi.register_signal({signal_number}, {caller.callback})')
 
             signal_number += 1
 
@@ -368,5 +378,5 @@ class Cron(models.Model):
 
     def add_cron(self):
         for args in self.get_matrix():
-            logger.error(f'[djcall] {self.caller} add cron : {args} signal {self.caller.signal_number}')
+            logger.debug(f'{self.caller} add cron : {args} signal {self.caller.signal_number}')
             uwsgi.add_cron(self.caller.signal_number, *args)
