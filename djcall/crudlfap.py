@@ -7,31 +7,24 @@ from .models import Call, Caller, Cron
 
 crudlfap.Router(
     Call,
-    material_icon='autorenew',
+    material_icon='assistant',
     views=[
-        crudlfap.DetailView.clone(
-            code_fields=['output', 'traceback', 'callback_code'],
-        ),
         crudlfap.ListView.clone(
-            table_meta_attributes_extra=dict(
-                page_field='execution_page',
-            ),
-            table_columns=dict(
-                callback=tables.Column(accessor='task.callback'),
-            ),
             table_fields=[
-                'status',
+                'caller',
+                'created',
                 'started',
                 'ended',
+                'status',
             ],
-            queryset=Call.objects.all().select_related('caller'),
         ),
+        crudlfap.DetailView,
     ],
 ).register()
 
 crudlfap.Router(
     Caller,
-    material_icon='local_laundry_service',
+    material_icon='assignment_ind',
     views=[
         crudlfap.ListView.clone(
             filterset_extra_class_attributes=dict(
@@ -54,7 +47,10 @@ crudlfap.Router(
     ]
 ).register()
 
-crudlfap.Router(Cron).register()
+crudlfap.Router(
+    Cron,
+    material_icon='access_alarm',
+).register()
 
 '''
 from crudlfap import crudlfap
