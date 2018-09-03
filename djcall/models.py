@@ -43,23 +43,22 @@ def spooler(env):
     # this is required otherwise some postgresql exceptions blow
     close_old_connections()
 
-    with transaction.atomic():
-        call = Call.objects.filter(pk=pk).first()
+    call = Call.objects.filter(pk=pk).first()
 
-        success = getattr(uwsgi, 'SPOOL_OK', True)
-        if call:
-            try:
-                call.call()
-            except:
-                max_attempts = call.caller.max_attempts
-                close_old_connections()  # cleanup
+    success = getattr(uwsgi, 'SPOOL_OK', True)
+    if call:
+        try:
+            call.call()
+        except:
+            max_attempts = call.caller.max_attempts
+            close_old_connections()  # cleanup
 
-                if max_attempts and call.caller.call_set.count() >= max_attempts:
-                    return success
-                raise  # will trigger retry from uwsgi
-        else:
-            logger.exception(
-                f'Call(id={pk}) not found in db ! removing from uWSGI spooler')
+            if max_attempts and call.caller.call_set.count() >= max_attempts:
+                return success
+            raise  # will trigger retry from uwsgi
+    else:
+        logger.exception(
+            f'Call(id={pk}) not found in db ! removing from uWSGI spooler')
 
     logger.debug(f'spooler(c({args})): closing on success')
     close_old_connections()  # cleanup
