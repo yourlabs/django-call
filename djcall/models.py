@@ -25,7 +25,7 @@ logger = logging.getLogger('djcall')
 
 def c(v):
     """Clean a value for logger output"""
-    return str(v).strip().replace('\n', ' ').replace('\r', '').[:16].encode(
+    return str(v).strip().replace('\n', ' ').replace('\r', '')[:16].encode(
         'ascii', 'ignore').decode('utf8')
 
 
