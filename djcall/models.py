@@ -103,6 +103,7 @@ class Metadata(models.Model):
     STATUS_SUCCESS = 3
     STATUS_RETRYING = 4
     STATUS_FAILURE = 5
+    STATUS_UNSPOOLABLE = 6
 
     STATUS_CHOICES = (
         (STATUS_CREATED, _('Created')),
@@ -111,6 +112,7 @@ class Metadata(models.Model):
         (STATUS_SUCCESS, _('Success')),
         (STATUS_RETRYING, _('Retrying')),
         (STATUS_FAILURE, _('Failure')),
+        (STATUS_UNSPOOLABLE, _('Unspoolable')),
     )
 
     status = models.IntegerField(
@@ -222,7 +224,14 @@ class Caller(Metadata):
                 arg[b'priority'] = self.priority
             def spool():
                 logger.debug(f'uwsgi.spool({arg})')
-                uwsgi.spool(arg)
+                try:
+                    uwsgi.spool(arg)
+                except Exception as e:
+                    tt, value, tb = sys.exc_info()
+                    call.exception = '\n'.join(traceback.format_exception(tt, value, tb))
+                    call.save_status('unspoolable')
+                    logger.exception(f'{self} -> Call(id={call.pk}).spool(): uwsgi.spool exception !')
+                    # uwsgi does not seem to reprint logger.exception
             transaction.on_commit(spool)
         else:
             call.call()
@@ -244,6 +253,7 @@ class Call(Metadata):
         (Caller.STATUS_STARTED, _('Started')),
         (Caller.STATUS_SUCCESS, _('Success')),
         (Caller.STATUS_FAILURE, _('Failure')),
+        (Caller.STATUS_UNSPOOLABLE, _('Unspoolable')),
     )
 
     caller = models.ForeignKey(Caller, on_delete=models.CASCADE)
